@@ -1,29 +1,25 @@
-import express, { Application, Request, Response, NextFunction} from 'express';
-import http from 'http'
-import { Server } from 'socket.io'
-import cors from 'cors'
+import express from 'express';
+import http from 'http';
+import WebSocket from 'ws';
+import { AddressInfo } from 'net';
 
-const app: Application = express()
-const server = http.createServer(app)
-const io = new Server(server, {
-  allowUpgrades: false, 
-  transports: ["polling"], 
-  cors: { origin: "*" },
-})
+const app = express();
+// initialize a simple http server
+const server = http.createServer(app);
+// initialize the WebSocket server instance
+const wss = new WebSocket.Server({ server });
 
-app.get('/', (req, res) => {
-  res.send('<h1>Hello world</h1>')
-})
+wss.on('connection', function connection(ws) {
+  ws.on('error', console.error);
 
-io.on('connection', (socket) => { 
-    socket.on('message', msg => {  
-        io.emit('message', msg)
-    })
-    socket.on('clear', function clear() {  
-        io.emit('clear')
-    })
-})
+  ws.on('message', function message(data) {
+    console.log('received: %s', data);
+  });
 
-server.listen(3000, () => {
-  console.log('listening on *:3000')
-})
+  ws.send('something');
+});
+
+// start our server
+server.listen(process.env.PORT || 8999, () => {
+    console.log(`Server started on port ${(server.address() as AddressInfo).port} :)`);
+});
