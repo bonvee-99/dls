@@ -1,19 +1,20 @@
-use tungstenite::{connect, Message};
+mod cli_controller;
+use std::thread::spawn;
 
+// entry point
 fn main() {
-    // Connect to the WebSocket server
-    let (mut socket, _) = connect("ws://localhost:8999").expect("Failed to connect");
+    println!("DLS CLI v0.1.0");
 
-    // Send a message to the server
-    socket.write_message(Message::Text("Hello, server!".into())).expect("Failed to send message");
+    let cli_thread = spawn( || {
+        println!("Waiting for message...");
+        let cli_handler = cli_controller::CliHandler::new();
+        cli_handler.start();
+    });
 
-    // Receive messages from the server
-    loop {
-        let message = socket.read_message().expect("Failed to read message");
-        match message {
-            Message::Text(text) => println!("Received message: {}", text),
-            Message::Binary(_) => println!("Received binary message"),
-            Message::Ping(_) | Message::Pong(_) | Message::Close(_) => (),
-        }
-    }
+    // prevent closing if other thread is active
+    cli_thread.join().unwrap();
+    println!("Thank you for using DLS CLI!");
 }
+
+
+
