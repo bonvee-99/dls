@@ -75,19 +75,6 @@ pub fn help_command() {
     println!("\x1b[1m\x1b[37m----------------------------------------------------------------\x1b[0m");
 }
 
-pub async fn start() {
-    let (stdin_tx, stdin_rx) = mpsc::unbounded::<Message>();
-    let (write, read) = server_connection().await;
-
-    let stdin_to_ws = tokio::spawn(write_text_to_server(write, stdin_rx));
-    let listen_stream = tokio::spawn(listen_to_server(read));
-    let stdin_tx2 = stdin_tx.clone();
-    tokio::spawn(cli_prompt(stdin_tx2));
-    stdin_tx.unbounded_send(Message::text("HHHH")).unwrap();
-
-    future::select(stdin_to_ws, listen_stream).await;
-}
-
 pub async fn cli_prompt(stdin_tx: UnboundedSender<Message>) {
     let stdin = io::stdin();
     let mut reader = io::BufReader::new(stdin);
