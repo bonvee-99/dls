@@ -30,7 +30,8 @@ wss.on('connection', function connection(ws: Custom_Web_Socket) {
   ws.on('message', (data: string) => {
     try {
       console.log(`Client ${ws.id} has sent us: ${data}`)
-      const parsedMessage: WS_Message = JSON.parse(data)
+      // const parsedMessage: WS_Message = JSON.parse(data)
+      ws.send('Received valid JSON')
     } catch (error) {
       console.error(error)
       ws.send('Received invalid JSON')
