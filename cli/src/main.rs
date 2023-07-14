@@ -14,7 +14,7 @@ use crate::commands::Command;
 #[tokio::main]
 async fn main() {
     let (stdin_tx, stdin_rx) = mpsc::unbounded::<Message>();
-    let ( write, read )= server_connection().await;
+    let (write, read) = server_connection().await;
 
     let stdin_to_ws = tokio::spawn(write_text_to_server(write, stdin_rx));
     let listen_stream = tokio::spawn(listen_to_server(read));
@@ -42,52 +42,51 @@ async fn write_text_to_server(mut write: SplitSink<WebSocketStream<MaybeTlsStrea
     }
 }
 
- async fn listen_to_server(read:  SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>)  {
-      read.for_each(|message| async {
-         let data = message.unwrap().into_data();
-          println!("\x1b[1m\x1b[95m>>\x1b[0m");
-          println!("\x1b[1m\x1b[36m{:?}\x1b[0m", String::from_utf8(data).unwrap());
-          println!("\x1b[1m\x1b[95m<<\x1b[0m");
-         // let data2 = data.clone();
-         // println!("got message: {:?}", String::from_utf8(data2).unwrap());
-         // tokio::io::stdout().write_all(&data).await.unwrap();
-          // std::io::stdout().write_all(&data2).unwrap();
-          // std::io::stdout().flush().unwrap();
-         tokio::io::stdout().flush().await.unwrap();
-     }).await;
+async fn listen_to_server(read: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>) {
+    read.for_each(|message| async {
+        let data = message.unwrap().into_data();
+        println!("\x1b[1m\x1b[95m>>\x1b[0m");
+        println!("\x1b[1m\x1b[36m{:?}\x1b[0m", String::from_utf8(data).unwrap());
+        println!("\x1b[1m\x1b[95m<<\x1b[0m");
+        // let data2 = data.clone();
+        // println!("got message: {:?}", String::from_utf8(data2).unwrap());
+        // tokio::io::stdout().write_all(&data).await.unwrap();
+        // std::io::stdout().write_all(&data2).unwrap();
+        // std::io::stdout().flush().unwrap();
+        tokio::io::stdout().flush().await.unwrap();
+    }).await;
 }
 
 pub fn help_command() {
-        let commands = vec![
-            (Command::Start, "Start a session to send and receive secrets"),
-            (Command::CreateRoom, "Create a room to send secrets to"),
-            (Command::JoinRoom, "Join a room to receive secrets from"),
-            (Command::Send, "Send a secret to a peer"),
-            (Command::List, "List all the secrets you have received"),
-            (Command::Help, "Print this help message"),
-            (Command::Quit, "Quit the application"),
-        ];
-        println!("\x1b[1m\x1b[37m------------------------LIST OF COMMANDS------------------------\x1b[0m");
-        for (command, description) in commands {
-            let command_str = format!("{:<15}", command.to_string());
-            println!("\x1b[1m\x1b[92m{} \x1b[0m{}", command_str, description);
-        }
-        println!("\x1b[1m\x1b[37m----------------------------------------------------------------\x1b[0m");
+    let commands = vec![
+        (Command::Start, "Start a session to send and receive secrets"),
+        (Command::CreateRoom, "Create a room to send secrets to"),
+        (Command::JoinRoom, "Join a room to receive secrets from"),
+        (Command::Send, "Send a secret to a peer"),
+        (Command::List, "List all the secrets you have received"),
+        (Command::Help, "Print this help message"),
+        (Command::Quit, "Quit the application"),
+    ];
+    println!("\x1b[1m\x1b[37m------------------------LIST OF COMMANDS------------------------\x1b[0m");
+    for (command, description) in commands {
+        let command_str = format!("{:<15}", command.to_string());
+        println!("\x1b[1m\x1b[92m{} \x1b[0m{}", command_str, description);
     }
+    println!("\x1b[1m\x1b[37m----------------------------------------------------------------\x1b[0m");
+}
 
-    pub async fn start() {
+pub async fn start() {
+    let (stdin_tx, stdin_rx) = mpsc::unbounded::<Message>();
+    let (write, read) = server_connection().await;
 
-        let (stdin_tx, stdin_rx) = mpsc::unbounded::<Message>();
-        let ( write, read )= server_connection().await;
+    let stdin_to_ws = tokio::spawn(write_text_to_server(write, stdin_rx));
+    let listen_stream = tokio::spawn(listen_to_server(read));
+    let stdin_tx2 = stdin_tx.clone();
+    tokio::spawn(cli_prompt(stdin_tx2));
+    stdin_tx.unbounded_send(Message::text("HHHH")).unwrap();
 
-        let stdin_to_ws = tokio::spawn(write_text_to_server(write, stdin_rx));
-        let listen_stream = tokio::spawn(listen_to_server(read));
-        let stdin_tx2 = stdin_tx.clone();
-        tokio::spawn(cli_prompt(stdin_tx2));
-        stdin_tx.unbounded_send(Message::text("HHHH")).unwrap();
-
-        future::select(stdin_to_ws, listen_stream).await;
-    }
+    future::select(stdin_to_ws, listen_stream).await;
+}
 
 pub async fn cli_prompt(stdin_tx: UnboundedSender<Message>) {
     let stdin = io::stdin();
