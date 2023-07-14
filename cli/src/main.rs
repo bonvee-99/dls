@@ -18,14 +18,11 @@ async fn main() {
 
     let stdin_to_ws = tokio::spawn(write_text_to_server(write, stdin_rx));
     let listen_stream = tokio::spawn(listen_to_server(read));
-
-    let cli_sender = stdin_tx.clone();
-    tokio::spawn(cli_prompt(cli_sender));
+    tokio::spawn(cli_prompt(stdin_tx));
     future::select(stdin_to_ws, listen_stream).await;
 }
 
 // establish connection to server
-// and create a stream to listen to server and a stream to write to server
 async fn server_connection() -> (SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>, SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>) {
     let connection_url = "ws://localhost:3000";
     let url = url::Url::parse(&connection_url).unwrap();
@@ -35,9 +32,9 @@ async fn server_connection() -> (SplitSink<WebSocketStream<MaybeTlsStream<TcpStr
 }
 
 async fn write_text_to_server(mut write: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>, mut stdin_rx: UnboundedReceiver<Message>) {
+    // TODO: once cli global controls such as ^C are implemented, it will be a buffer
     loop {
         let msg = stdin_rx.next().await.unwrap();
-        // println!("write_text_to_server: {:?}", msg);
         write.send(msg).await.unwrap();
     }
 }
@@ -48,11 +45,6 @@ async fn listen_to_server(read: SplitStream<WebSocketStream<MaybeTlsStream<TcpSt
         println!("\x1b[1m\x1b[95m>>\x1b[0m");
         println!("\x1b[1m\x1b[36m{:?}\x1b[0m", String::from_utf8(data).unwrap());
         println!("\x1b[1m\x1b[95m<<\x1b[0m");
-        // let data2 = data.clone();
-        // println!("got message: {:?}", String::from_utf8(data2).unwrap());
-        // tokio::io::stdout().write_all(&data).await.unwrap();
-        // std::io::stdout().write_all(&data2).unwrap();
-        // std::io::stdout().flush().unwrap();
         tokio::io::stdout().flush().await.unwrap();
     }).await;
 }
@@ -81,7 +73,6 @@ pub async fn cli_prompt(stdin_tx: UnboundedSender<Message>) {
 
     loop {
         let mut input = String::new();
-        // Read input asynchronously
         let _ = reader.read_line(&mut input).await;
 
         let command = match Command::from_string(&input.trim().split(' ').next().unwrap()) {
@@ -108,21 +99,3 @@ pub async fn cli_prompt(stdin_tx: UnboundedSender<Message>) {
         input.clear();
     }
 }
-
-
-// TODO: once cli global controls such as ^C are implemented, this will be the main sender
-// read from stdin and request to send to server
-// async fn write_to_server(tx: mpsc::UnboundedSender<Message>) {
-//     let mut stdin = tokio::io::stdin();
-//     loop {
-//         let mut buf = vec![0; 1024];
-//         let n = match stdin.read(&mut buf).await {
-//             Err(_) | Ok(0) => break,
-//             Ok(n) => n,
-//         };
-//         buf.truncate(n);
-//         tx.unbounded_send(Message::binary(buf)).unwrap();
-//     }
-// }
-
-
