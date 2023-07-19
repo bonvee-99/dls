@@ -22,7 +22,6 @@ async fn main() {
     future::select(stdin_to_ws, listen_stream).await;
 }
 
-// establish connection to server
 async fn server_connection() -> (SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>, SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>) {
     let connection_url = "ws://localhost:3000";
     let url = url::Url::parse(&connection_url).unwrap();
@@ -73,13 +72,20 @@ pub async fn cli_prompt(stdin_tx: UnboundedSender<Message>) {
 
     loop {
         let mut input = String::new();
-        let _ = reader.read_line(&mut input).await;
+        let _bytes_read = reader.read_line(&mut input).await.unwrap();
 
-        let command = match Command::from_string(&input.trim().split(' ').next().unwrap()) {
+        let trimmed_input = input.trim();
+        let parts: Vec<&str> = trimmed_input.split_whitespace().collect();
+
+        if parts.is_empty() {
+            println!("No input received. Please try again");
+            continue;
+        }
+
+        let command = match Command::from_string(parts[0]) {
             Some(cmd) => cmd,
             None => {
                 println!("\x1b[1m\x1b[95m\nUnknown command: {}\x1b[0m", input.trim());
-                input.clear();
                 Command::Help
             }
         };
@@ -88,14 +94,17 @@ pub async fn cli_prompt(stdin_tx: UnboundedSender<Message>) {
         if command.to_string() == Command::Help.to_string() {
             help_command();
         } else if command.to_string() == Command::Send.to_string() {
-            // remove the command from the input and the new line at the end
-            let slice = &input[Command::Send.to_string().len() + 1..input.len() - 1];
-            stdin_tx.unbounded_send(Message::text(slice)).unwrap();
+            if parts.len() < 2 {
+                println!("missing arguments for send");
+                continue;
+            }
+            stdin_tx.unbounded_send(Message::text(parts[1])).unwrap();
+            println!("ran");
         } else if command.to_string() == Command::Quit.to_string() {
-            break;
+            println!("Goodbye!");
+            std::process::exit(0);
         } else {
             help_command();
         }
-        input.clear();
     }
 }
