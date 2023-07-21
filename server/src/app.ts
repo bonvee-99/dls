@@ -2,41 +2,33 @@ import express from 'express'
 import http from 'http'
 import WebSocket from 'ws'
 import { AddressInfo } from 'net'
-import { v4 as uuidv4 } from 'uuid'
+import Room from './room'
+import Client from './client'
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-interface Custom_Web_Socket extends WebSocket {
-  id: string,
-  rooms: []
-}
+const rooms = new Map<string,Room>()
 
-interface WS_Message {
-  type: string
-}
-
-const rooms = new Map()
-
-wss.on('connection', function connection(ws: Custom_Web_Socket) {
-  ws.id = uuidv4()
-  console.log('New client connected: ', ws.id)
+wss.on('connection', function connection(ws: WebSocket) {
+  const client = new Client('dave', ws)
+  console.log('New client connected: ', client.id)
 
   ws.on('close', () => {
     // leave all rooms its connected to
-    console.log(`Client ${ws.id} disconnected`)
+    console.log(`Client ${client.id} disconnected`)
   })
 
   ws.on('message', (data: string) => {
-    handle_message(data, ws)
+    handle_message(data, client)
   })
 
-  ws.send(`Your id is: ${ws.id}`)
+  ws.send(`Your id is: ${client.id}`)
 
-  wss.clients.forEach((client) => {
-    console.log('Client.ID: ', (client as Custom_Web_Socket).id)
-  });
+  // wss.clients.forEach((client) => {
+  //   console.log('Client.ID: ', (client as Custom_Web_Socket).id)
+  // });
 })
 
 // start our server
@@ -44,29 +36,60 @@ server.listen(process.env.PORT || 3000, () => {
     console.log(`Server started on port ${(server.address() as AddressInfo).port}`)
 })
 
-function handle_message(data: string, ws: Custom_Web_Socket) {
+function handle_message(data: string, client: Client) {
   try {
-    // client can (1) create room, (2) join room, (3) send data
-    console.log(`Client ${ws.id} has sent us: ${data}`)
-    // const parsedMessage: WS_Message = JSON.parse(data)
-    ws.send('Received valid JSON')
-    // send to room
+    const { message_type, room_id, secret_message } = JSON.parse(data)
+
+    // TODO: validate that message_type and room_id are valid ?
+
+    if (message_type === 'create') {
+      // create room with uuid
+      const room = new Room(client)
+      rooms.set(room.id, room)
+      client.ws.send(`Created room with the id: ${room.id}`)
+    } else if (message_type === 'join') {
+      join_room(client, room_id)
+    } else if (message_type === 'secret') {
+      send_message(client, room_id, secret_message)
+    } else {
+      // ???
+    }
   } catch (error) {
     console.error(error)
-    ws.send('Received invalid JSON')
+    client.ws.send('Received invalid JSON')
   }
 }
 
-// TODO: allow user to create room, and let others join it using the given url, leave room upon WS disconnect
+function join_room(client: Client, room_id: string) {
+  console.log('join room called with client: ', client.id)
+  const room = rooms.get(room_id)
+  if (!room) {
+    client.ws.send(`No room with the id: ${room_id} found`)
+    return
+  }
 
-// function broadcastMessage(sender, room, message) {
-//   const clients = rooms.get(room);
-//
-//   if (clients) {
-//     clients.forEach((client) => {
-//       if (client !== sender && client.readyState === WebSocket.OPEN) {
-//         client.send(JSON.stringify({ type: 'message', content: message }));
-//       }
-//     });
-//   }
-// }
+  if (room.has_client(client)) {
+    client.ws.send(`You are already in this room`)
+    return
+  }
+
+  room.add_client(client)
+}
+
+function send_message(client: Client, room_id: string, secret_message: string) {
+  // check if client belongs to room even
+  const room = rooms.get(room_id)
+
+  if (!room) {
+    client.ws.send(`No room with the id: ${room_id} found`)
+    return
+  }
+
+  if (!room.has_client(client)) {
+    client.ws.send(`You are already in this room`)
+    return
+  }
+
+  room.broadcast_message(client, secret_message)
+}
+

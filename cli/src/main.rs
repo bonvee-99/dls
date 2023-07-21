@@ -53,8 +53,8 @@ async fn listen_to_server(read: SplitStream<WebSocketStream<MaybeTlsStream<TcpSt
 pub fn help_command() {
     let commands = vec![
         (Command::Start, "Start a session to send and receive secrets"),
-        (Command::CreateRoom, "Create a room to send secrets to"),
-        (Command::JoinRoom, "Join a room to receive secrets from"),
+        (Command::Create, "Create a room to send secrets to"),
+        (Command::Join, "Join a room to receive secrets from"),
         (Command::Send, "Send a secret to a peer"),
         (Command::List, "List all the secrets you have received"),
         (Command::Help, "Print this help message"),
@@ -96,14 +96,18 @@ fn handle_input(input: &str, stdin_tx: &UnboundedSender<WS_Message>) {
         }
     };
 
-    let arguments = parts.get(1..);
+    let arguments = if parts.len() > 1 {
+        Some(&parts[1..])
+    } else {
+        None
+    };
     
     match command {
         Command::Start => todo!(),
-        Command::CreateRoom | Command::JoinRoom | Command::Send => {
+        Command::Create => {
             create_room(stdin_tx);
         },
-        Command::JoinRoom => todo!(),
+        Command::Join => join_room(arguments, stdin_tx),
         Command::Send => {
             send_message(arguments, stdin_tx);
         },
@@ -121,21 +125,44 @@ fn handle_input(input: &str, stdin_tx: &UnboundedSender<WS_Message>) {
 #[derive(Serialize, Deserialize)]
 struct Message {
     // TODO: change this
-    command: Option<String>,
-    secret: Option<String>,
+    message_type: Option<String>,
+    room_id: Option<String>,
+    secret_message: Option<String>,
     key: Option<String>
 }
 
 fn create_room(stdin_tx: &UnboundedSender<WS_Message>) {
     let msg = Message {
-        command: Some("create".to_string()),
-        secret: None,
+        message_type: Some("create".to_string()),
+        secret_message: None,
+        room_id: None,
         key: None
     };
     let json_msg = serde_json::to_string(&msg).unwrap();
     stdin_tx.unbounded_send(WS_Message::text(json_msg)).unwrap();
 }
 
+fn join_room(arguments: Option<&[&str]>, stdin_tx: &UnboundedSender<WS_Message>) {
+    match arguments {
+        Some(args) => {
+            let msg = Message {
+                message_type: Some("join".to_string()),
+                secret_message: None,
+                // TODO: send the actual room id!
+                room_id: Some(args[0].to_string()),
+                key: None
+            };
+            let json_msg = serde_json::to_string(&msg).unwrap();
+            stdin_tx.unbounded_send(WS_Message::text(json_msg)).unwrap();
+        },
+        None => {
+            println!("missing arguments for join");
+        },
+    }
+}
+
+// TODO: cache the room so we don't need to use it as an argument (will need to use a lock ?)
+// right now do $ send <message> <room_id>
 fn send_message(arguments: Option<&[&str]>, stdin_tx: &UnboundedSender<WS_Message>) {
     match arguments {
         Some(args) => {
@@ -145,8 +172,10 @@ fn send_message(arguments: Option<&[&str]>, stdin_tx: &UnboundedSender<WS_Messag
             // { type: create }
             // { type: join, room: <room> }
             let msg = Message {
-                command: Some("secret".to_string()),
-                secret: Some(args[0].to_string()),
+                message_type: Some("secret".to_string()),
+                secret_message: Some(args[0].to_string()),
+                // TODO: send the actual room id!
+                room_id: Some(args[1].to_string()),
                 key: None
             };
             let json_msg = serde_json::to_string(&msg).unwrap();
