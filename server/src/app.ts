@@ -9,6 +9,7 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
+// TODO: we need to use a mutex here probably
 const rooms = new Map<string,Room>()
 
 wss.on('connection', function connection(ws: WebSocket) {
@@ -16,7 +17,7 @@ wss.on('connection', function connection(ws: WebSocket) {
   console.log('New client connected: ', client.id)
 
   ws.on('close', () => {
-    // leave all rooms its connected to
+    // TODO: leave all rooms its connected to (maybe add 'room' field on client?)
     console.log(`Client ${client.id} disconnected`)
   })
 
@@ -25,13 +26,8 @@ wss.on('connection', function connection(ws: WebSocket) {
   })
 
   ws.send(`Your id is: ${client.id}`)
-
-  // wss.clients.forEach((client) => {
-  //   console.log('Client.ID: ', (client as Custom_Web_Socket).id)
-  // });
 })
 
-// start our server
 server.listen(process.env.PORT || 3000, () => {
     console.log(`Server started on port ${(server.address() as AddressInfo).port}`)
 })
@@ -60,8 +56,8 @@ function handle_message(data: string, client: Client) {
   }
 }
 
+// TODO: do we want to add these methods to client class ?
 function join_room(client: Client, room_id: string) {
-  console.log('join room called with client: ', client.id)
   const room = rooms.get(room_id)
   if (!room) {
     client.ws.send(`No room with the id: ${room_id} found`)
