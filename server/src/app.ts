@@ -10,6 +10,7 @@ const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
 // TODO: we need to use a mutex here probably
+// MAYBE WE CAN USE REDIS here instead. Will simplify things and is really easy to setup. (i am thinking it will be difficult to handle race conditions if we have a bunch of references to 'rooms' within clients + in main
 const rooms = new Map<string,Room>()
 
 wss.on('connection', function connection(ws: WebSocket) {
@@ -56,7 +57,7 @@ function handle_message(data: string, client: Client) {
   }
 }
 
-// TODO: do we want to add these methods to client class ?
+// TODO: add this as a client method
 function join_room(client: Client, room_id: string) {
   const room = rooms.get(room_id)
   if (!room) {
@@ -72,6 +73,7 @@ function join_room(client: Client, room_id: string) {
   room.add_client(client)
 }
 
+// TODO: do we want to add these methods to client class ?
 function send_message(client: Client, room_id: string, secret_message: string) {
   // check if client belongs to room even
   const room = rooms.get(room_id)

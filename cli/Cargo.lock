@@ -95,6 +95,7 @@ version = "0.1.0"
 dependencies = [
  "futures-channel",
  "futures-util",
+ "once_cell",
  "serde",
  "serde_json",
  "tokio",

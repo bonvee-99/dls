@@ -12,6 +12,13 @@ use tokio::net::TcpStream;
 use crate::commands::Command;
 use serde::{Deserialize, Serialize};
 // use serde_json::Result;
+use std::{sync::Mutex, collections::HashMap};
+use once_cell::sync::Lazy;
+
+static GLOBAL_DATA: Lazy<Mutex<HashMap<i32, String>>> = Lazy::new(|| {
+    let m = HashMap::new();
+    Mutex::new(m)
+});
 
 #[tokio::main]
 async fn main() {
@@ -43,9 +50,8 @@ async fn write_text_to_server(mut write: SplitSink<WebSocketStream<MaybeTlsStrea
 async fn listen_to_server(read: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>) {
     read.for_each(|message| async {
         let data = message.unwrap().into_data();
-        println!("\x1b[1m\x1b[95m>>\x1b[0m");
-        println!("\x1b[1m\x1b[36m{:?}\x1b[0m", String::from_utf8(data).unwrap());
-        println!("\x1b[1m\x1b[95m<<\x1b[0m");
+        let parsed_data = String::from_utf8(data).unwrap();
+        handle_server_data(parsed_data);
         tokio::io::stdout().flush().await.unwrap();
     }).await;
 }
@@ -81,6 +87,9 @@ pub async fn cli_prompt(stdin_tx: UnboundedSender<WS_Message>) {
 }
 
 fn handle_input(input: &str, stdin_tx: &UnboundedSender<WS_Message>) {
+    // TODO: add middleware/utility function that validates each command has correct number
+    // of arguments ??? can do this later... or use library ... or just do within each command
+    // function
     let trimmed_input = input.trim();
     let parts: Vec<&str> = trimmed_input.split_whitespace().collect();
 
@@ -123,7 +132,22 @@ fn handle_input(input: &str, stdin_tx: &UnboundedSender<WS_Message>) {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Message {
+struct FromServerMessage {
+    room: Option<String>,
+    message: Option<String>
+}
+
+fn handle_server_data(data: String) {
+    println!("data: {}", data);
+    // TODO: fix so server is sending right data in this form
+    // let server_data: FromServerMessage = serde_json::from_str(&data).unwrap();
+    println!("\x1b[1m\x1b[95m>>\x1b[0m");
+    println!("\x1b[1m\x1b[36m{:?}\x1b[0m", data);
+    println!("\x1b[1m\x1b[95m<<\x1b[0m");
+}
+
+#[derive(Serialize, Deserialize)]
+struct ToServerMessage {
     // TODO: change this
     message_type: Option<String>,
     room_id: Option<String>,
@@ -132,7 +156,7 @@ struct Message {
 }
 
 fn create_room(stdin_tx: &UnboundedSender<WS_Message>) {
-    let msg = Message {
+    let msg = ToServerMessage {
         message_type: Some("create".to_string()),
         secret_message: None,
         room_id: None,
@@ -145,7 +169,7 @@ fn create_room(stdin_tx: &UnboundedSender<WS_Message>) {
 fn join_room(arguments: Option<&[&str]>, stdin_tx: &UnboundedSender<WS_Message>) {
     match arguments {
         Some(args) => {
-            let msg = Message {
+            let msg = ToServerMessage {
                 message_type: Some("join".to_string()),
                 secret_message: None,
                 // TODO: send the actual room id!
@@ -163,6 +187,8 @@ fn join_room(arguments: Option<&[&str]>, stdin_tx: &UnboundedSender<WS_Message>)
 
 // TODO: cache the room so we don't need to use it as an argument (will need to use a lock ?)
 // right now do $ send <message> <room_id>
+// TODO: fix so we don't crash when user doesnt pass in the room id (or just fix so we dont need
+// to pass the room id
 fn send_message(arguments: Option<&[&str]>, stdin_tx: &UnboundedSender<WS_Message>) {
     match arguments {
         Some(args) => {
@@ -171,7 +197,7 @@ fn send_message(arguments: Option<&[&str]>, stdin_tx: &UnboundedSender<WS_Messag
             // { type: send, message: <encrypted-message> }
             // { type: create }
             // { type: join, room: <room> }
-            let msg = Message {
+            let msg = ToServerMessage {
                 message_type: Some("secret".to_string()),
                 secret_message: Some(args[0].to_string()),
                 // TODO: send the actual room id!
