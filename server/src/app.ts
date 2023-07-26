@@ -2,50 +2,92 @@ import express from 'express'
 import http from 'http'
 import WebSocket from 'ws'
 import { AddressInfo } from 'net'
-import { v4 as uuidv4 } from 'uuid'
+import Room from './room'
+import Client from './client'
 
 const app = express();
-// initialize a simple http server
 const server = http.createServer(app);
-// initialize the WebSocket server instance
 const wss = new WebSocket.Server({ server });
 
-interface Custom_Web_Socket extends WebSocket {
-  id: string,
-  rooms: []
-}
+// TODO: we need to use a mutex here probably
+// MAYBE WE CAN USE REDIS here instead. Will simplify things and is really easy to setup. (i am thinking it will be difficult to handle race conditions if we have a bunch of references to 'rooms' within clients + in main
+const rooms = new Map<string,Room>()
 
-interface WS_Message {
-  type: string
-}
-
-wss.on('connection', function connection(ws: Custom_Web_Socket) {
-  ws.id = uuidv4()
-  console.log('New client connected: ', ws.id)
+wss.on('connection', function connection(ws: WebSocket) {
+  const client = new Client('dave', ws)
+  console.log('New client connected: ', client.id)
 
   ws.on('close', () => {
-    console.log(`Client ${ws.id} disconnected`)
+    // TODO: leave all rooms its connected to (maybe add 'room' field on client?)
+    console.log(`Client ${client.id} disconnected`)
   })
 
   ws.on('message', (data: string) => {
-    try {
-      console.log(`Client ${ws.id} has sent us: ${data}`)
-      // const parsedMessage: WS_Message = JSON.parse(data)
-      ws.send('Received valid JSON')
-    } catch (error) {
-      console.error(error)
-      ws.send('Received invalid JSON')
-    }
+    handle_message(data, client)
   })
 
-  ws.send(`Your id is: ${ws.id}`)
-
-  wss.clients.forEach((client) => {
-    console.log('Client.ID: ', (client as Custom_Web_Socket).id)
-  });
+  ws.send(`Your id is: ${client.id}`)
 })
 
-// start our server
 server.listen(process.env.PORT || 3000, () => {
     console.log(`Server started on port ${(server.address() as AddressInfo).port}`)
 })
+
+function handle_message(data: string, client: Client) {
+  try {
+    const { message_type, room_id, secret_message } = JSON.parse(data)
+
+    // TODO: validate that message_type and room_id are valid ?
+
+    if (message_type === 'create') {
+      // create room with uuid
+      const room = new Room(client)
+      rooms.set(room.id, room)
+      client.ws.send(`Created room with the id: ${room.id}`)
+    } else if (message_type === 'join') {
+      join_room(client, room_id)
+    } else if (message_type === 'secret') {
+      send_message(client, room_id, secret_message)
+    } else {
+      // ???
+    }
+  } catch (error) {
+    console.error(error)
+    client.ws.send('Received invalid JSON')
+  }
+}
+
+// TODO: add this as a client method
+function join_room(client: Client, room_id: string) {
+  const room = rooms.get(room_id)
+  if (!room) {
+    client.ws.send(`No room with the id: ${room_id} found`)
+    return
+  }
+
+  if (room.has_client(client)) {
+    client.ws.send(`You are already in this room`)
+    return
+  }
+
+  room.add_client(client)
+}
+
+// TODO: do we want to add these methods to client class ?
+function send_message(client: Client, room_id: string, secret_message: string) {
+  // check if client belongs to room even
+  const room = rooms.get(room_id)
+
+  if (!room) {
+    client.ws.send(`No room with the id: ${room_id} found`)
+    return
+  }
+
+  if (!room.has_client(client)) {
+    client.ws.send(`You are already in this room`)
+    return
+  }
+
+  room.broadcast_message(client, secret_message)
+}
+
