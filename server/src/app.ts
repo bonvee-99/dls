@@ -4,21 +4,24 @@ import WebSocket from 'ws'
 import { AddressInfo } from 'net'
 import Room from './room'
 import Client from './client'
+import nconf from 'nconf'
+import path from 'path'
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-// TODO: we need to use a mutex here probably
-// MAYBE WE CAN USE REDIS here instead. Will simplify things and is really easy to setup. (i am thinking it will be difficult to handle race conditions if we have a bunch of references to 'rooms' within clients + in main
+// TODO: we need to use a mutex here
 const rooms = new Map<string,Room>()
+
+nconf
+  .file('appsettings', { file: path.join(__dirname, 'appsettings.json') })
 
 wss.on('connection', function connection(ws: WebSocket) {
   const client = new Client('dave', ws)
   console.log('New client connected: ', client.id)
 
   ws.on('close', () => {
-    // TODO: leave all rooms its connected to (maybe add 'room' field on client?)
     console.log(`Client ${client.id} disconnected`)
   })
 
@@ -30,6 +33,7 @@ wss.on('connection', function connection(ws: WebSocket) {
 })
 
 server.listen(process.env.PORT || 3000, () => {
+    console.log(nconf.get())
     console.log(`Server started on port ${(server.address() as AddressInfo).port}`)
 })
 
@@ -57,7 +61,6 @@ function handle_message(data: string, client: Client) {
   }
 }
 
-// TODO: add this as a client method
 function join_room(client: Client, room_id: string) {
   const room = rooms.get(room_id)
   if (!room) {
@@ -73,7 +76,6 @@ function join_room(client: Client, room_id: string) {
   room.add_client(client)
 }
 
-// TODO: do we want to add these methods to client class ?
 function send_message(client: Client, room_id: string, secret_message: string) {
   // check if client belongs to room even
   const room = rooms.get(room_id)

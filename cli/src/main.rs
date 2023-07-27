@@ -87,9 +87,6 @@ pub async fn cli_prompt(stdin_tx: UnboundedSender<WS_Message>) {
 }
 
 fn handle_input(input: &str, stdin_tx: &UnboundedSender<WS_Message>) {
-    // TODO: add middleware/utility function that validates each command has correct number
-    // of arguments ??? can do this later... or use library ... or just do within each command
-    // function
     let trimmed_input = input.trim();
     let parts: Vec<&str> = trimmed_input.split_whitespace().collect();
 
