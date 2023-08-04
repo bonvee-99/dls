@@ -18,10 +18,13 @@ nconf
   .file('appsettings', { file: path.join(__dirname, 'appsettings.json') })
 
 wss.on('connection', function connection(ws: WebSocket) {
-  const client = new Client('dave', ws)
+  const client = new Client(ws)
   console.log('New client connected: ', client.id)
 
   ws.on('close', () => {
+    if (client.room) {
+      client.room.remove_client(client)
+    }
     console.log(`Client ${client.id} disconnected`)
   })
 
@@ -29,7 +32,9 @@ wss.on('connection', function connection(ws: WebSocket) {
     handle_message(data, client)
   })
 
-  ws.send(`Your id is: ${client.id}`)
+  ws.send(JSON.stringify(
+    { Message: { text: `Your id is: ${client.id}` } }
+  ))
 })
 
 server.listen(process.env.PORT || 3000, () => {
@@ -44,36 +49,38 @@ function handle_message(data: string, client: Client) {
     // TODO: validate that message_type and room_id are valid ?
 
     if (message_type === 'create') {
-      // create room with uuid
       const room = new Room(client)
       rooms.set(room.id, room)
-      client.ws.send(`Created room with the id: ${room.id}`)
+      const message = {
+        JoinRoom: {
+          text: `Created room with the id: ${room.id}`,
+          room_id: room.id
+        }
+      }
+      client.ws.send(JSON.stringify(message))
     } else if (message_type === 'join') {
       join_room(client, room_id)
     } else if (message_type === 'secret') {
       send_message(client, room_id, secret_message)
+    // TODO: leave room
     } else {
       // ???
     }
   } catch (error) {
     console.error(error)
-    client.ws.send('Received invalid JSON')
+    client.ws.send(JSON.stringify({ Message: { text: 'Received invalid JSON' } }))
   }
 }
 
 function join_room(client: Client, room_id: string) {
   const room = rooms.get(room_id)
   if (!room) {
-    client.ws.send(`No room with the id: ${room_id} found`)
+    client.ws.send(JSON.stringify({ Message: { text: `No room with the id: ${room_id} found` } }))
     return
   }
 
-  if (room.has_client(client)) {
-    client.ws.send(`You are already in this room`)
-    return
-  }
-
-  room.add_client(client)
+  client.join_room(room)
+  // room.add_client(client)
 }
 
 function send_message(client: Client, room_id: string, secret_message: string) {
@@ -81,15 +88,15 @@ function send_message(client: Client, room_id: string, secret_message: string) {
   const room = rooms.get(room_id)
 
   if (!room) {
-    client.ws.send(`No room with the id: ${room_id} found`)
+    client.ws.send(JSON.stringify({ Message: { text: `No room with the id: ${room_id} found` } }))
     return
   }
 
-  if (!room.has_client(client)) {
-    client.ws.send(`You are already in this room`)
-    return
-  }
+  // if (!room.has_client(client)) {
+  //   // client.ws.send(`You are not in this room`)
+  //   return
+  // }
 
-  room.broadcast_message(client, secret_message)
+  room.broadcast_message(client, secret_message, true)
 }
 

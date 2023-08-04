@@ -17,13 +17,30 @@ export default class Room {
     this.capacity = nconf.get('ROOM_CAPACITY')
   }
 
-  add_client(client: Client) {
-    if (this.clients.size < this.capacity - 1) {
-      this.clients.add(client)
-      client.ws.send(`Successfully joined room ${this.id}`)
-      this.owner.ws.send(`User with id: ${client.id} joined your room`)
+  add_client(client: Client): boolean {
+    if (this.has_client(client)) {
+      client.ws.send(JSON.stringify({ Message: { text: 'You are already in this room' } }))
+      return false
+    }
+    if (this.clients.size >= this.capacity) {
+      client.ws.send(JSON.stringify({ Message: { text: 'Room is full' } }))
+      return false
+    }
+    this.clients.add(client)
+    // maybe send to all clients ?
+    this.broadcast_message(client, `User with id: ${client.id} joined your room`, false)
+    client.ws.send(JSON.stringify({ JoinRoom: { room_id: this.id, text: `Successfully joined room ${this.id}` } }))
+    return true
+  }
+  
+  remove_client(client: Client) {
+    if (this.has_client(client)) {
+      // TODO: handle when owner leaves the room
+      this.broadcast_message(client, `User with id: ${client.id} left your room`, false)
+      this.clients.delete(client)
+      client.ws.send(JSON.stringify({ Message: { text: `Successfully left room: ${this.id}` } }))
     } else {
-      client.ws.send(`Room ${this.id} is full`)
+      // you are not in this room
     }
   }
 
@@ -31,11 +48,18 @@ export default class Room {
     return this.clients.has(client)
   }
 
-  broadcast_message(sender: Client, message: string) {
+  broadcast_message(sender: Client, message: string, secret: boolean) {
+    if (!this.has_client(sender)) {
+      sender.ws.send(JSON.stringify({ Message: { text: 'Unable to send message. You are not in this room' } }))
+    }
     this.clients.forEach((client: Client) => {
-      console.log('client', client.id)
       if (client !== sender && client.ws.readyState === WebSocket.OPEN) {
-        client.ws.send(`Received message: ${message} from user ${sender.id}`)
+        // we do this secret flag to prevent the user from pretending to leave the room. This way we know when a user sends a message or the server is telling us something
+        if (secret) {
+          client.ws.send(JSON.stringify({ Message: { text: `${sender.id}: ${message}` } }))
+        } else {
+          client.ws.send(JSON.stringify({ Message: { text: message } }))
+        }
       }
     })
   }
