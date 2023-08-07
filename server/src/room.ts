@@ -7,17 +7,20 @@ export default class Room {
   id: string
   owner: Client
   clients: Set<Client>
+  public_keys: Map<string, string>
   readonly capacity: number
 
-  constructor(owner: Client) {
+  constructor(owner: Client, public_key: string) {
     this.id = uuidv4()
     this.owner = owner
     this.clients = new Set()
     this.clients.add(owner)
     this.capacity = nconf.get('ROOM_CAPACITY')
+    this.public_keys = new Map()
+    this.public_keys.set(owner.id, public_key)
   }
 
-  add_client(client: Client): boolean {
+  add_client(client: Client, public_key: string): boolean {
     if (this.has_client(client)) {
       client.ws.send(JSON.stringify({ Message: { text: 'You are already in this room' } }))
       return false
@@ -26,17 +29,22 @@ export default class Room {
       client.ws.send(JSON.stringify({ Message: { text: 'Room is full' } }))
       return false
     }
+
+    const keys = Array.from(this.public_keys).map(([user_id, public_key]) => ({
+      user_id, public_key
+    }))
+    
     this.clients.add(client)
-    // maybe send to all clients ?
-    this.broadcast_message(client, `User with id: ${client.id} joined your room`, false)
-    client.ws.send(JSON.stringify({ JoinRoom: { room_id: this.id, text: `Successfully joined room ${this.id}` } }))
+    this.broadcast_message(client, JSON.stringify({ PublicKey: { text: `User with id: ${client.id} joined your room`, public_key, user_id: client.id } }))
+    // TODO: now we need to send client array of public keys to save
+    client.ws.send(JSON.stringify({ JoinRoom: { room_id: this.id, text: `Successfully joined room ${this.id}`, public_keys: keys } }))
     return true
   }
   
   remove_client(client: Client) {
     if (this.has_client(client)) {
       // TODO: handle when owner leaves the room
-      this.broadcast_message(client, `User with id: ${client.id} left your room`, false)
+      this.broadcast_message(client, JSON.stringify({ Message: { text: `User with id: ${client.id} left your room` } }))
       this.clients.delete(client)
       client.ws.send(JSON.stringify({ Message: { text: `Successfully left room: ${this.id}` } }))
     } else {
@@ -48,18 +56,13 @@ export default class Room {
     return this.clients.has(client)
   }
 
-  broadcast_message(sender: Client, message: string, secret: boolean) {
+  broadcast_message(sender: Client, message: string) {
     if (!this.has_client(sender)) {
       sender.ws.send(JSON.stringify({ Message: { text: 'Unable to send message. You are not in this room' } }))
     }
     this.clients.forEach((client: Client) => {
       if (client !== sender && client.ws.readyState === WebSocket.OPEN) {
-        // we do this secret flag to prevent the user from pretending to leave the room. This way we know when a user sends a message or the server is telling us something
-        if (secret) {
-          client.ws.send(JSON.stringify({ Message: { text: `${sender.id}: ${message}` } }))
-        } else {
-          client.ws.send(JSON.stringify({ Message: { text: message } }))
-        }
+        client.ws.send(message)
       }
     })
   }

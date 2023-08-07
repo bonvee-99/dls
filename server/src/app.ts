@@ -44,22 +44,24 @@ server.listen(process.env.PORT || 3000, () => {
 
 function handle_message(data: string, client: Client) {
   try {
-    const { message_type, room_id, secret_message } = JSON.parse(data)
+    const { message_type, room_id, secret_message, public_key } = JSON.parse(data)
+
+    console.log(JSON.parse(data))
 
     // TODO: validate that message_type and room_id are valid ?
 
     if (message_type === 'create') {
-      const room = new Room(client)
+      const room = new Room(client, public_key)
       rooms.set(room.id, room)
       const message = {
-        JoinRoom: {
+        CreateRoom: {
           text: `Created room with the id: ${room.id}`,
           room_id: room.id
         }
       }
       client.ws.send(JSON.stringify(message))
     } else if (message_type === 'join') {
-      join_room(client, room_id)
+      join_room(client, room_id, public_key)
     } else if (message_type === 'secret') {
       send_message(client, room_id, secret_message)
     // TODO: leave room
@@ -72,15 +74,14 @@ function handle_message(data: string, client: Client) {
   }
 }
 
-function join_room(client: Client, room_id: string) {
+function join_room(client: Client, room_id: string, public_key: string) {
   const room = rooms.get(room_id)
   if (!room) {
     client.ws.send(JSON.stringify({ Message: { text: `No room with the id: ${room_id} found` } }))
     return
   }
 
-  client.join_room(room)
-  // room.add_client(client)
+  client.join_room(room, public_key)
 }
 
 function send_message(client: Client, room_id: string, secret_message: string) {
@@ -96,7 +97,6 @@ function send_message(client: Client, room_id: string, secret_message: string) {
   //   // client.ws.send(`You are not in this room`)
   //   return
   // }
-
-  room.broadcast_message(client, secret_message, true)
+  room.broadcast_message(client, JSON.stringify({ SecretMessage: { user_id: client.id, text: secret_message } }))
 }
 

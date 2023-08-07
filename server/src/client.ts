@@ -13,12 +13,12 @@ export default class Client {
     this.room = null
   }
 
-  join_room(room: Room) {
+  join_room(room: Room, public_key: string) {
     if (this.room) {
       this.ws.send(JSON.stringify({ Message: { text: `Leaving room ${this.room}` } }))
       this.room.remove_client(this)
     }
-    const joined = room.add_client(this)
+    const joined = room.add_client(this, public_key)
     if (joined) {
       this.room = room
     }
