@@ -16,6 +16,12 @@ use tokio_tungstenite::{
     connect_async, tungstenite::protocol::Message as WS_Message, MaybeTlsStream, WebSocketStream,
 };
 
+use openssl::rsa::{Rsa, Padding};
+use openssl::pkey::{PKey, Private, Public};
+use openssl::encrypt::{Encrypter, Decrypter};
+
+use base64;
+
 // use ring::rand::SystemRandom;
 // use ring::signature::{Ed25519KeyPair, KeyPair};
 
@@ -24,30 +30,65 @@ static GLOBAL_DATA: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(|| {
     Mutex::new(m)
 });
 
-// fn generate_keypair() {
-// let rng = SystemRandom::new();
-// let pkcs8_bytes = Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
-// let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8_bytes.as_ref()).unwrap();
-// let public_key_bytes = key_pair.public_key().as_ref().to_vec();
-// (key_pair, public_key_bytes)
+fn generate_keypair() -> (PKey<Private>, Vec<u8>) {
+    let rsa = Rsa::generate(2048).unwrap();
+    let private_key = PKey::from_rsa(rsa).unwrap();
+    let public_key: Vec<u8> = private_key.public_key_to_pem().unwrap();
+    (private_key, public_key)
+}
 
-// we need to sign the message then encrypt it!
-// this way we know that the sender knew the message before encryption!
-// ACTUALLY DO NOT SIGN IT. we dont need to do this because theres no authentication for
-// users
-// just use encryption instead
+fn encrypt_data(public_key: &str, text: &str) -> String {
+    let pkey = PKey::public_key_from_pem(public_key.as_bytes()).unwrap();
 
-// TODO: USE OPENSSL LIBRARY INSTEAD! preferably with ed25119 or RSA if its easier (if
-// you use rsa then make sure its significaly big enough or else it will be insecure)
-// }
+    let data = text.as_bytes();
+    let mut encrypter = Encrypter::new(&pkey).unwrap();
+    encrypter.set_rsa_padding(Padding::PKCS1).unwrap();
+    // Create an output buffer
+    let buffer_len = encrypter.encrypt_len(data).unwrap();
+    let mut encrypted = vec![0; buffer_len];
+    // Encrypt and truncate the buffer
+    let encrypted_len = encrypter.encrypt(data, &mut encrypted).unwrap();
+    encrypted.truncate(encrypted_len);
+    base64::encode(&encrypted)
+}
+
+fn decrypt_data(private_key: &PKey<Private>, text: &str) -> String {
+    let data = base64::decode(text).unwrap();
+    // // Decrypt the data
+    let mut decrypter = Decrypter::new(private_key).unwrap();
+    decrypter.set_rsa_padding(Padding::PKCS1).unwrap();
+    // // Create an output buffer
+    let buffer_len = decrypter.decrypt_len(&data).unwrap();
+    let mut decrypted = vec![0; buffer_len];
+    // // Encrypt and truncate the buffer
+    let decrypted_len = decrypter.decrypt(&data, &mut decrypted).unwrap();
+    decrypted.truncate(decrypted_len);
+    std::str::from_utf8(&decrypted).unwrap().to_string()
+}
 
 #[tokio::main]
 async fn main() {
+    let (private_key, public_key) = generate_keypair();
+    let mut global_data = GLOBAL_DATA.lock().unwrap();
+    // save your own public key
+    global_data.insert("public_key".to_string(), std::str::from_utf8(public_key.as_slice()).unwrap().to_string());
+    std::mem::drop(global_data);
+    // TODO: encrypt secret message before sending
+    // TODO: have server send SecretMessage type for secrets!
+    
+    // 1) user receives base64 encoded public key
+    // 2) user changes it to bytes
+    // 3) user creates pkey with it and saves it to map (user_id: pkey)
+    // 4) user can then use pkey to encrypt data
+
+    // TODO: try decrypting data that was encrypted with wrong public key!
+
+    
     let (stdin_tx, stdin_rx) = mpsc::unbounded::<WS_Message>();
     let (write, read) = server_connection().await;
 
     let stdin_to_ws = tokio::spawn(write_text_to_server(write, stdin_rx));
-    let listen_stream = tokio::spawn(listen_to_server(read));
+    let listen_stream = tokio::spawn(listen_to_server(read, private_key));
     tokio::spawn(cli_prompt(stdin_tx));
     future::select(stdin_to_ws, listen_stream).await;
 }
@@ -74,11 +115,11 @@ async fn write_text_to_server(
     }
 }
 
-async fn listen_to_server(read: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>) {
+async fn listen_to_server(read: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>, private_key: PKey<Private>) {
     read.for_each(|message| async {
         let data = message.unwrap().into_data();
         let parsed_data = String::from_utf8(data).unwrap();
-        handle_server_data(parsed_data);
+        handle_server_data(parsed_data, &private_key);
         tokio::io::stdout().flush().await.unwrap();
     })
     .await;
@@ -166,29 +207,49 @@ fn handle_input(input: &str, stdin_tx: &UnboundedSender<WS_Message>) {
 }
 
 #[derive(Serialize, Deserialize)]
-enum ServerResponse {
-    JoinRoom { room_id: String, text: String },
-    Message { text: String },
+struct UserPublicKey {
+    user_id: String,
+    public_key: String
 }
 
-// #[derive(Serialize, Deserialize)]
-// struct CreateRoomResult {
-//     room_id: String,
-//     text: String
-// }
+#[derive(Serialize, Deserialize)]
+enum ServerResponse {
+    JoinRoom { room_id: String, text: String, public_keys: Vec<UserPublicKey> },
+    CreateRoom { room_id: String, text: String },
+    Message { text: String },
+    SecretMessage { user_id: String, text: String },
+    PublicKey { public_key: String, user_id: String, text: String }
+}
 
-fn handle_server_data(data: String) {
-    // println!("data: {}", data);
-    // TODO: fix so server is sending right data in this form
+fn handle_server_data(data: String, private_key: &PKey<Private>) {
     let server_data: ServerResponse = serde_json::from_str(&data).unwrap();
 
     let message = match server_data {
-        ServerResponse::JoinRoom { room_id, text } => {
+        ServerResponse::JoinRoom { room_id, text, public_keys } => {
+            let mut global_data = GLOBAL_DATA.lock().unwrap();
+            global_data.insert("room".to_string(), room_id);
+            for user_key in public_keys {
+                // right now there is only one other person in room
+                let UserPublicKey { user_id: _, public_key } = user_key;
+                global_data.insert("roommate".to_string(), public_key);
+            }
+            text
+        },
+        ServerResponse::CreateRoom { room_id, text } => {
             let mut global_data = GLOBAL_DATA.lock().unwrap();
             global_data.insert("room".to_string(), room_id);
             text
-        }
+        },
         ServerResponse::Message { text } => text,
+        ServerResponse::SecretMessage { user_id, text } => {
+            let decrypted_message = decrypt_data(private_key, &text);
+            format!("{}: {}", user_id, decrypted_message)
+        },
+        ServerResponse::PublicKey { public_key, user_id, text } => {
+            let mut global_data = GLOBAL_DATA.lock().unwrap();
+            global_data.insert("roommate".to_string(), public_key);
+            text
+        },
     };
     println!("\x1b[1m\x1b[95m>>\x1b[0m");
     println!("\x1b[1m\x1b[36m{:?}\x1b[0m", message);
@@ -201,32 +262,49 @@ struct ToServerMessage {
     message_type: Option<String>,
     room_id: Option<String>,
     secret_message: Option<String>,
-    key: Option<String>,
+    public_key: Option<String>,
 }
 
 fn create_room(stdin_tx: &UnboundedSender<WS_Message>) {
-    let msg = ToServerMessage {
-        message_type: Some("create".to_string()),
-        secret_message: None,
-        room_id: None,
-        key: None,
-    };
-    let json_msg = serde_json::to_string(&msg).unwrap();
-    stdin_tx.unbounded_send(WS_Message::text(json_msg)).unwrap();
+    let global_data = GLOBAL_DATA.lock().unwrap();
+    let public_key = global_data.get("public_key");
+    match public_key {
+        Some(key) => {
+            let msg = ToServerMessage {
+                message_type: Some("create".to_string()),
+                secret_message: None,
+                room_id: None,
+                public_key: Some(key.to_string()),
+            };
+            let json_msg = serde_json::to_string(&msg).unwrap();
+            stdin_tx.unbounded_send(WS_Message::text(json_msg)).unwrap();
+        }
+        None => {
+            // public key doesnt exist
+        }
+    }
 }
 
 fn join_room(arguments: Option<&[&str]>, stdin_tx: &UnboundedSender<WS_Message>) {
     match arguments {
         Some(args) => {
-            let msg = ToServerMessage {
-                message_type: Some("join".to_string()),
-                secret_message: None,
-                // TODO: send the actual room id!
-                room_id: Some(args[0].to_string()),
-                key: None,
-            };
-            let json_msg = serde_json::to_string(&msg).unwrap();
-            stdin_tx.unbounded_send(WS_Message::text(json_msg)).unwrap();
+            let global_data = GLOBAL_DATA.lock().unwrap();
+            let public_key = global_data.get("public_key");
+            match public_key {
+                Some(key) => {
+                    let msg = ToServerMessage {
+                        message_type: Some("join".to_string()),
+                        secret_message: None,
+                        room_id: Some(args[0].to_string()),
+                        public_key: Some(key.to_string()),
+                    };
+                    let json_msg = serde_json::to_string(&msg).unwrap();
+                    stdin_tx.unbounded_send(WS_Message::text(json_msg)).unwrap();
+                }
+                None => {
+                    // public key doesnt exist
+                }
+            }
         }
         None => {
             println!("missing arguments for join");
@@ -234,29 +312,23 @@ fn join_room(arguments: Option<&[&str]>, stdin_tx: &UnboundedSender<WS_Message>)
     }
 }
 
-// TODO: cache the room so we don't need to use it as an argument (will need to use a lock ?)
-// right now do $ send <message> <room_id>
-// TODO: fix so we don't crash when user doesnt pass in the room id (or just fix so we dont need
-// to pass the room id
 fn send_message(arguments: Option<&[&str]>, stdin_tx: &UnboundedSender<WS_Message>) {
     let global_data = GLOBAL_DATA.lock().unwrap();
     if let Some(room) = global_data.get("room") {
         match arguments {
             Some(args) => {
-                // encrypt message
-                // stringify message
-                // { type: send, message: <encrypted-message> }
-                // { type: create }
-                // { type: join, room: <room> }
-                let msg = ToServerMessage {
-                    message_type: Some("secret".to_string()),
-                    secret_message: Some(args[0].to_string()),
-                    // TODO: send the actual room id!
-                    room_id: Some(room.to_string()),
-                    key: None,
-                };
-                let json_msg = serde_json::to_string(&msg).unwrap();
-                stdin_tx.unbounded_send(WS_Message::text(json_msg)).unwrap();
+                if let Some(key) = global_data.get("roommate") {
+                    let msg = ToServerMessage {
+                        message_type: Some("secret".to_string()),
+                        secret_message: Some(encrypt_data(key, args[0])),
+                        room_id: Some(room.to_string()),
+                        public_key: None,
+                    };
+                    let json_msg = serde_json::to_string(&msg).unwrap();
+                    stdin_tx.unbounded_send(WS_Message::text(json_msg)).unwrap();
+                } else {
+                    println!("no public key for roommate found");
+                }
             }
             None => {
                 println!("missing arguments for send");
@@ -266,8 +338,3 @@ fn send_message(arguments: Option<&[&str]>, stdin_tx: &UnboundedSender<WS_Messag
         println!("must join room before sending messages");
     }
 }
-
-// end to end encryption possibilities:
-// (1) Diffie–Hellman key exchange (symmetric key ?)
-
-// (2) each user has public key to encrypt their messages
